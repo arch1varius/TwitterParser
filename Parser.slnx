@@ -1,0 +1,15 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/Parser.Core/Parser.Core.csproj" />
+    <Project Path="src/Parser.Contracts/Parser.Contracts.csproj" />
+    <Project Path="src/Parser.Infrastructure/Parser.Infrastructure.csproj" />
+    <Project Path="src/Parser.Api/Parser.Api.csproj" />
+    <Project Path="src/Parser.WinUI/Parser.WinUI.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Parser.Tests/Parser.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+TestResults/
+.local/
+.env
+**/appsettings.Local.json
+**/storage-state.json
+**/playwright/.auth/
+*.user
