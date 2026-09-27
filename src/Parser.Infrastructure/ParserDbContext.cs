@@ -16,15 +16,17 @@ public sealed class ParserDbContext(DbContextOptions<ParserDbContext> options) :
     {
         model.Entity<Author>(e =>
         {
-            e.HasIndex(x => x.SourceId).IsUnique();
+            e.Property(x => x.Source).HasConversion<string>().HasDefaultValue(PostSourceKind.X);
+            e.HasIndex(x => new { x.Source, x.SourceId }).IsUnique();
             e.HasIndex(x => x.Username);
             e.Property(x => x.SourceId).HasMaxLength(32);
-            e.Property(x => x.Username).HasMaxLength(15);
+            e.Property(x => x.Username).HasMaxLength(32);
             e.Property(x => x.DisplayName).HasMaxLength(200);
         });
         model.Entity<Post>(e =>
         {
-            e.HasIndex(x => x.SourceId).IsUnique();
+            e.Property(x => x.Source).HasConversion<string>().HasDefaultValue(PostSourceKind.X);
+            e.HasIndex(x => new { x.Source, x.SourceId }).IsUnique();
             e.HasIndex(x => new { x.AuthorId, x.PublishedAt });
             e.HasIndex(x => x.ExpiresAt);
             e.Property(x => x.SourceId).HasMaxLength(32);
@@ -38,9 +40,10 @@ public sealed class ParserDbContext(DbContextOptions<ParserDbContext> options) :
         });
         model.Entity<ParseJob>(e =>
         {
+            e.Property(x => x.Source).HasConversion<string>().HasDefaultValue(PostSourceKind.X);
             e.Property(x => x.Status).HasConversion<string>();
             e.HasIndex(x => new { x.Status, x.CreatedAt });
-            e.Property(x => x.Author).HasMaxLength(15);
+            e.Property(x => x.Author).HasMaxLength(32);
         });
         model.Entity<ParseJobLog>(e =>
         {

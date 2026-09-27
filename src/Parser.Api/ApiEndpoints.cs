@@ -15,10 +15,13 @@ public static class ApiEndpoints
 
         app.MapPost("/api/parse-jobs", async (CreateParseJobRequest request, ParserDbContext db, CancellationToken ct) =>
         {
-            var author = PostRules.NormalizeAuthor(request.Author);
+            var source = SourceKinds.Parse(request.Source);
+            if (source is null)
+                return Problem(400, "invalid_source", "Источник должен быть x или telegram.");
+            var author = SourceKinds.NormalizeAuthor(request.Author, source.Value);
             if (author is null || !ValidPeriod(request.From, request.To))
-                return Problem(400, "invalid_request", "Укажите username автора и корректный период from < to.");
-            var job = new ParseJob { Author = author, From = request.From.ToUniversalTime(), To = request.To.ToUniversalTime() };
+                return Problem(400, "invalid_request", "Укажите username автора/канала (для Telegram также https://t.me/name или ID -100…) и период from < to.");
+            var job = new ParseJob { Source = source.Value, Author = author, From = request.From.ToUniversalTime(), To = request.To.ToUniversalTime() };
             db.Jobs.Add(job);
             await db.SaveChangesAsync(ct);
             return Results.Accepted($"/api/parse-jobs/{job.Id}", ToDto(job));
@@ -72,9 +75,15 @@ public static class ApiEndpoints
                     .Select(item => new ParseJobLogCount(item.Reason.ToString(), item.Count)).ToArray()));
         });
 
-        app.MapGet("/api/authors", async (ParserDbContext db, CancellationToken ct) =>
-            await db.Authors.AsNoTracking().OrderBy(a => a.Username)
-                .Select(a => new AuthorDto(a.Id, a.SourceId, a.Username, a.DisplayName)).ToListAsync(ct));
+        app.MapGet("/api/authors", async (string? source, ParserDbContext db, CancellationToken ct) =>
+        {
+            var kind = SourceKinds.Parse(source);
+            if (kind is null) return Problem(400, "invalid_source", "Источник должен быть x или telegram.");
+            var query = db.Authors.AsNoTracking();
+            if (source is not null) query = query.Where(a => a.Source == kind.Value);
+            var authors = await query.OrderBy(a => a.Username).ThenBy(a => a.Source).ToListAsync(ct);
+            return Results.Ok(authors.Select(a => new AuthorDto(a.Id, a.SourceId, a.Username, a.DisplayName, a.Source.ToApiValue())));
+        });
 
         app.MapGet("/api/posts", async (Guid authorId, DateTimeOffset from, DateTimeOffset to,
             int? page, int? pageSize, ParserDbContext db, CancellationToken ct) =>
@@ -130,10 +139,10 @@ public static class ApiEndpoints
 
     public static ParseJobDto ToDto(ParseJob j) => new(j.Id, j.Author, j.From, j.To, j.Status.ToString(),
         j.Scanned, j.Saved, j.Existing, j.SkippedVideo, j.SkippedOther, j.Errors, j.CreatedAt,
-        j.StartedAt, j.FinishedAt, j.EarliestSeenAt, j.StopReason, j.ErrorCode, j.ErrorMessage);
+        j.StartedAt, j.FinishedAt, j.EarliestSeenAt, j.StopReason, j.ErrorCode, j.ErrorMessage, j.Source.ToApiValue());
 
     private static PostDto ToDto(Post p) => new(p.Id, p.SourceId,
-        new(p.Author.Id, p.Author.SourceId, p.Author.Username, p.Author.DisplayName), p.Text,
+        new(p.Author.Id, p.Author.SourceId, p.Author.Username, p.Author.DisplayName, p.Author.Source.ToApiValue()), p.Text,
         p.PublishedAt, p.Url, p.Photos.Where(i => i.Downloaded).OrderBy(i => i.Position)
-            .Select(i => new PhotoDto(i.Id, i.Position, $"/api/photos/{i.Id}")).ToArray());
+            .Select(i => new PhotoDto(i.Id, i.Position, $"/api/photos/{i.Id}")).ToArray(), p.Source.ToApiValue());
 }

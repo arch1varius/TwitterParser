@@ -4,6 +4,8 @@ using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -26,6 +28,82 @@ public sealed class PostgresFactAttribute : FactAttribute
 
 public sealed class IntegrationTests
 {
+    [PostgresFact]
+    public async Task TelegramJobsUseHistorySourceAndSupportTextOnlyFilteringDeduplicationAndReading()
+    {
+        await using var host = await TestHost.CreateAsync();
+        var from = TelegramTests.Start;
+        var request = new CreateParseJobRequest("https://t.me/Channel/", from, from.AddDays(1), "telegram");
+        var job = await Wait(host.Client, (await Start(host.Client, request)).Id);
+        Assert.Equal("Completed", job.Status);
+        Assert.Equal("telegram", job.Source);
+        Assert.Equal("channel", job.Author);
+        Assert.Equal(1, job.Saved);
+        Assert.Equal(2, job.SkippedOther);
+        Assert.Equal("PeriodStartReached", job.StopReason);
+        var again = await Wait(host.Client, (await Start(host.Client, request)).Id);
+        Assert.Equal(1, again.Existing);
+        Assert.Equal(0, again.Saved);
+        var author = Assert.Single((await host.Client.GetFromJsonAsync<List<AuthorDto>>("/api/authors?source=telegram"))!);
+        Assert.Equal("telegram", author.Source);
+        Assert.Empty((await host.Client.GetFromJsonAsync<List<AuthorDto>>("/api/authors?source=x"))!);
+        var query = $"authorId={author.Id}&from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z";
+        var post = Assert.Single((await host.Client.GetFromJsonAsync<PostPage>($"/api/posts?{query}"))!.Items);
+        Assert.Equal("telegram", post.Source);
+        Assert.Equal("42:3", post.SourceId);
+        Assert.Equal("https://t.me/channel/3", post.Url);
+        Assert.Equal(TelegramTests.Text, post.Text);
+        Assert.Empty(post.Photos);
+        Assert.Equal(post.Id, (await host.Client.GetFromJsonAsync<PostDto>($"/api/posts/random?{query}"))!.Id);
+        var logs = (await host.Client.GetFromJsonAsync<ParseJobLogPage>($"/api/parse-jobs/{job.Id}/logs?reason=TooShort"))!;
+        Assert.Equal(10, Assert.Single(logs.Items).WordCount);
+        Assert.Contains("минимум 11", logs.Items[0].Detail);
+        Assert.Equal(0, host.Photos.DownloadAttempts);
+        var missingLogin = await Wait(host.Client, (await Start(host.Client, request with { Author = "login" })).Id);
+        Assert.Equal("NeedsLogin", missingLogin.Status);
+        var longName = await Wait(host.Client, (await Start(host.Client, request with { Author = new string('a', 32) })).Id);
+        Assert.Equal("Completed", longName.Status);
+        foreach (var invalid in new[] { request with { Source = "unknown" }, request with { Author = "https://example.com/channel" }, request with { From = request.To } })
+            Assert.Equal(HttpStatusCode.BadRequest, (await host.Client.PostAsJsonAsync("/api/parse-jobs", invalid)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await host.Client.GetAsync("/api/authors?source=unknown")).StatusCode);
+        var slow = await Start(host.Client, request with { Author = "slow" });
+        await WaitStatus(host.Client, slow.Id, "Running");
+        await host.Client.PostAsync($"/api/parse-jobs/{slow.Id}/cancel", null);
+        Assert.Equal("Cancelled", (await Wait(host.Client, slow.Id)).Status);
+        await host.Factory.DisposeAsync();
+        host.Restart();
+        Assert.Equal("telegram", (await host.Client.GetFromJsonAsync<ParseJobDto>($"/api/parse-jobs/{job.Id}"))!.Source);
+        Assert.Equal(post.Id, (await host.Client.GetFromJsonAsync<PostDto>($"/api/posts/random?{query}"))!.Id);
+    }
+
+    [PostgresFact]
+    public async Task MigrationPreservesExistingXDataAndAllowsIdenticalIdsAcrossSources()
+    {
+        await using var host = await TestHost.CreateAsync();
+        await host.Factory.DisposeAsync();
+        await using var db = new ParserDbContext(new DbContextOptionsBuilder<ParserDbContext>().UseNpgsql(host.Connection).Options);
+        await db.GetService<IMigrator>().MigrateAsync("20260924120000_AddJobLogs");
+        var authorId = Guid.NewGuid(); var postId = Guid.NewGuid(); var date = TelegramTests.Start;
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "Authors" ("Id", "SourceId", "Username", "DisplayName") VALUES ({authorId}, '42', 'channel', 'X author');
+            INSERT INTO "Posts" ("Id", "SourceId", "AuthorId", "Text", "Url", "PublishedAt", "CollectedAt", "Status")
+            VALUES ({postId}, '42:3', {authorId}, {TelegramTests.Text}, 'https://x.com/channel/status/3', {date}, {date}, 'Ready');
+            """);
+        await db.Database.MigrateAsync();
+        var old = await db.Posts.Include(p => p.Author).SingleAsync();
+        Assert.Equal(postId, old.Id);
+        Assert.Equal(PostSourceKind.X, old.Source);
+        Assert.Equal(PostSourceKind.X, old.Author.Source);
+        Assert.Equal(TelegramTests.Text, old.Text);
+        var importer = new PostImporter(db, Microsoft.Extensions.Options.Options.Create(new ParserOptions()));
+        var tg = TelegramPostSource.ConvertMessage(TelegramTests.Channel(), TelegramTests.Message(3, date), "channel");
+        Assert.Equal(ImportResult.Saved, await importer.ImportAsync(tg, default));
+        Assert.Equal(ImportResult.Existing, await importer.ImportAsync(tg, default));
+        Assert.Equal(2, await db.Posts.CountAsync());
+        Assert.Equal(2, await db.Authors.CountAsync());
+        Assert.False(db.Database.HasPendingModelChanges());
+    }
+
     [PostgresFact]
     public async Task JobLogsPersistReasonsSupportPagingAndStayIsolated()
     {
@@ -296,6 +374,15 @@ internal sealed class TestHost : IAsyncDisposable
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IPostSource>(); services.AddScoped<IPostSource, FakeSource>();
+                services.RemoveAll<ITelegramHistoryClientFactory>();
+                services.AddSingleton<ITelegramHistoryClientFactory>(new FakeTelegramFactory(() => new FakeTelegramClient
+                {
+                    Pages = [[
+                        TelegramTests.Message(3, TelegramTests.Start),
+                        TelegramTests.Message(2, TelegramTests.Start, "one two three four five six seven eight nine ten"),
+                        TelegramTests.Message(1, TelegramTests.Start.AddDays(-1))
+                    ]]
+                }));
                 services.RemoveAll<IPhotoStore>(); services.AddSingleton<IPhotoStore>(Photos);
             });
         });
@@ -311,10 +398,15 @@ internal sealed class TestHost : IAsyncDisposable
     }
 }
 
-internal sealed class FakeSource : IPostSource
+internal sealed class FakeSource(TelegramPostSource telegram) : IPostSource
 {
     public async IAsyncEnumerable<SourcePage> ReadAsync(SourceRequest request, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        if (request.Source == PostSourceKind.Telegram)
+        {
+            await foreach (var page in telegram.ReadAsync(request, cancellationToken)) yield return page;
+            yield break;
+        }
         if (request.Author == "slow") await Task.Delay(60000, cancellationToken);
         if (request.Author == "login") throw new SourceException("login_required", "Test login required.");
         var post = new SourcePost(request.Author + "1", request.Author + "id", request.Author, "Alice",

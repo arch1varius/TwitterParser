@@ -5,9 +5,11 @@ namespace Parser.Core;
 public sealed record SourcePhoto(string Url, int Width, int Height);
 public sealed record SourcePost(string Id, string AuthorId, string Username, string DisplayName,
     string Text, DateTimeOffset PublishedAt, bool HasVideo, bool IsReply, bool IsRepost,
-    bool IsQuote, bool IsComplete, IReadOnlyList<SourcePhoto> Photos);
+    bool IsQuote, bool IsComplete, IReadOnlyList<SourcePhoto> Photos,
+    PostSourceKind Source = PostSourceKind.X, string? Url = null);
 public sealed record SourcePage(IReadOnlyList<SourcePost> Posts, string? StopReason = null);
-public sealed record SourceRequest(string Author, DateTimeOffset From, DateTimeOffset To);
+public sealed record SourceRequest(string Author, DateTimeOffset From, DateTimeOffset To,
+    PostSourceKind Source = PostSourceKind.X);
 
 public interface IPostSource
 {
@@ -44,13 +46,13 @@ public static partial class PostRules
 
     public static FilterResult Evaluate(SourcePost post, SourceRequest request)
     {
-        if (!string.Equals(post.Username, request.Author, StringComparison.OrdinalIgnoreCase))
+        if (post.Source != request.Source || !string.Equals(post.Username, request.Author, StringComparison.OrdinalIgnoreCase))
             return FilterResult.WrongAuthor;
         if (post.PublishedAt < request.From || post.PublishedAt >= request.To)
             return FilterResult.OutsidePeriod;
         if (!post.IsComplete || string.IsNullOrWhiteSpace(post.Id) || string.IsNullOrWhiteSpace(post.AuthorId))
             return FilterResult.Incomplete;
-        if (CountWords(post.Text) < 10) return FilterResult.TooShort;
+        if (CountWords(post.Text) < MinimumWords(request.Source)) return FilterResult.TooShort;
         return FilterResult.Accept;
     }
 
@@ -61,7 +63,7 @@ public static partial class PostRules
         {
             FilterResult.WrongAuthor => $"Автор @{post.Username}; в задании выбран @{request.Author}.",
             FilterResult.OutsidePeriod => $"Дата поста {post.PublishedAt.ToUniversalTime():O} вне периода [{request.From.ToUniversalTime():O}, {request.To.ToUniversalTime():O}). Конец периода не включается.",
-            FilterResult.TooShort => $"В тексте {words} слов; требуется минимум 10. HTTP(S)-ссылки и отдельные эмодзи не считаются словами.",
+            FilterResult.TooShort => $"В тексте {words} слов; требуется минимум {MinimumWords(request.Source)}. HTTP(S)-ссылки и отдельные эмодзи не считаются словами.",
             FilterResult.Incomplete => "Неполные данные: " + string.Join("; ", new[]
             {
                 !post.IsComplete ? "источник не предоставил полный текст или необходимые метаданные" : null,
@@ -80,4 +82,6 @@ public static partial class PostRules
             WordCount = words, Reason = reason, Detail = detail
         };
     }
+
+    public static int MinimumWords(PostSourceKind source) => source == PostSourceKind.Telegram ? 11 : 10;
 }

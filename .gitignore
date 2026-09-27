@@ -7,5 +7,7 @@ TestResults/
 .env
 **/appsettings.Local.json
 **/storage-state.json
+*.session
+*.session.*
 **/playwright/.auth/
 *.user

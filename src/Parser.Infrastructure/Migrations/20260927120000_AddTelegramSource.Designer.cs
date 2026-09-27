@@ -10,10 +10,9 @@ using Parser.Infrastructure;
 
 namespace Parser.Infrastructure.Migrations
 {
-    [DbContext(typeof(ParserDbContext))]
-    partial class ParserDbContextModelSnapshot : ModelSnapshot
+    partial class AddTelegramSource
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

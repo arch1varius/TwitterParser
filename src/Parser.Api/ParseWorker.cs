@@ -84,7 +84,7 @@ public sealed class ParseWorker(IServiceScopeFactory scopes, IConfiguration conf
         {
             var source = services.GetRequiredService<IPostSource>();
             var importer = services.GetRequiredService<PostImporter>();
-            var request = new SourceRequest(job.Author, job.From, job.To);
+            var request = new SourceRequest(job.Author, job.From, job.To, job.Source);
             var seen = new HashSet<string>();
             await foreach (var page in source.ReadAsync(request, jobToken.Token))
             {

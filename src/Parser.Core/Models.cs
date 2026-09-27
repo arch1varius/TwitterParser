@@ -2,9 +2,11 @@ namespace Parser.Core;
 
 public enum JobStatus { Queued, Running, CancelRequested, Cancelled, Completed, Failed, NeedsLogin }
 public enum PostStatus { PendingPhotos, Ready }
+public enum PostSourceKind { X, Telegram }
 
 public sealed class Author
 {
+    public PostSourceKind Source { get; set; }
     public Guid Id { get; set; } = Guid.NewGuid();
     public string SourceId { get; set; } = "";
     public string Username { get; set; } = "";
@@ -13,6 +15,7 @@ public sealed class Author
 
 public sealed class Post
 {
+    public PostSourceKind Source { get; set; }
     public Guid Id { get; set; } = Guid.NewGuid();
     public string SourceId { get; set; } = "";
     public Guid AuthorId { get; set; }
@@ -42,6 +45,7 @@ public sealed class PostPhoto
 
 public sealed class ParseJob
 {
+    public PostSourceKind Source { get; set; }
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Author { get; set; } = "";
     public DateTimeOffset From { get; set; }

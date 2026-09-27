@@ -22,8 +22,19 @@ if (args.Contains("--login-x", StringComparer.Ordinal))
     return;
 }
 
+builder.Services.AddOptions<TelegramOptions>().BindConfiguration("Telegram");
+if (args.Contains("--login-telegram", StringComparer.Ordinal))
+{
+    await TelegramSession.LoginAsync(builder.Configuration.GetSection("Telegram").Get<TelegramOptions>() ?? new(),
+        builder.Configuration.GetSection("Parser").Get<ParserOptions>() ?? new());
+    return;
+}
+
 builder.Services.AddDbContext<ParserDbContext>(o => o.UseNpgsql(builder.Configuration.GetConnectionString("Parser")));
-builder.Services.AddScoped<IPostSource, PlaywrightPostSource>();
+builder.Services.AddScoped<PlaywrightPostSource>();
+builder.Services.AddScoped<TelegramPostSource>();
+builder.Services.AddScoped<ITelegramHistoryClientFactory, TelegramHistoryClientFactory>();
+builder.Services.AddScoped<IPostSource, RoutedPostSource>();
 builder.Services.AddHttpClient<IPhotoStore, PhotoStore>(c => c.Timeout = TimeSpan.FromSeconds(30))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddScoped<PostImporter>();
