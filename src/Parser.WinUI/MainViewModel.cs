@@ -17,6 +17,7 @@ public sealed class PostCard
 }
 
 public sealed record LogReasonOption(string Code, string Label);
+public sealed record SourceOption(string Code, string Label);
 public sealed record JobLogCard(string Caption, string Reason, string Detail, string TextPreview, Uri Url);
 
 public sealed class MainViewModel : ObservableObject, IDisposable
@@ -26,6 +27,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string serverUrl = "http://localhost:5080";
     private string apiKey = "";
     private string author = "";
+    private SourceOption? selectedSource;
     private string message = "Подключитесь к серверу на вкладке «Подключение».";
     private string jobId = "";
     private string jobSummary = "Задание не запущено.";
@@ -43,6 +45,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string ServerUrl { get => serverUrl; set => SetProperty(ref serverUrl, value); }
     public string ApiKey { get => apiKey; set => SetProperty(ref apiKey, value); }
     public string Author { get => author; set => SetProperty(ref author, value); }
+    public SourceOption? SelectedSource
+    {
+        get => selectedSource;
+        set
+        {
+            if (!SetProperty(ref selectedSource, value)) return;
+            OnPropertyChanged(nameof(AuthorHeader));
+            OnPropertyChanged(nameof(AuthorPlaceholder));
+            OnPropertyChanged(nameof(CollectionHelp));
+        }
+    }
+    private string SourceCode => SelectedSource?.Code ?? "x";
+    public string AuthorHeader => SourceCode == "telegram" ? "Канал Telegram" : "Username автора в X";
+    public string AuthorPlaceholder => SourceCode == "telegram"
+        ? "@channel, https://t.me/channel или ID -100…" : "username или @username";
+    public string CollectionHelp => SourceCode == "telegram"
+        ? "Сохраняются текст и подписи к медиа строго больше 10 слов. Вложения не скачиваются. Перед первым сбором настройте аккаунт Telegram на сервере и выполните вход по инструкции в README."
+        : "Сохраняется текст постов от 10 слов, включая ответы, репосты и цитаты. Изображения, видео и GIF не скачиваются. Причины пропусков доступны на вкладке «Лог задания».";
     public string Message { get => message; set => SetProperty(ref message, value); }
     public string JobId
     {
@@ -66,10 +86,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<PostCard> Posts { get; } = [];
     public ObservableCollection<PostCard> RandomPosts { get; } = [];
     public ObservableCollection<JobLogCard> JobLogs { get; } = [];
+    public IReadOnlyList<SourceOption> Sources { get; } = [new("x", "X"), new("telegram", "Telegram")];
     public IReadOnlyList<LogReasonOption> LogReasons { get; } =
     [
         new("", "Все причины"), new("WrongAuthor", "Другой автор"),
-        new("OutsidePeriod", "Вне периода"), new("TooShort", "Меньше 10 слов"),
+        new("OutsidePeriod", "Вне периода"), new("TooShort", "Недостаточно слов"),
         new("Incomplete", "Неполные данные (ошибка)")
     ];
     public IAsyncRelayCommand ConnectCommand { get; }
@@ -87,6 +108,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
+        selectedSource = Sources[0];
         ConnectCommand = Command(async () =>
         {
             polling?.Cancel(); ResetLog(); api.Connect(ServerUrl, ApiKey);
@@ -96,7 +118,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         StartCommand = Command(async () =>
         {
             var (start, end) = Period();
-            var job = await api.StartAsync(new(Author, start, end));
+            var job = await api.StartAsync(new(Author.Trim(), start, end, SourceCode));
             JobId = job.Id.ToString(); ShowJob(job); StartPolling(job.Id);
         });
         TrackCommand = Command(async () =>
@@ -153,7 +175,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
     private async Task<PostCard> ToCardAsync(PostDto post)
     {
-        var card = new PostCard { Text = post.Text, Caption = $"@{post.Author.Username} · {post.PublishedAt.ToLocalTime():g}", Url = new(post.Url) };
+        var card = new PostCard { Text = post.Text, Caption = $"{SourceLabel(post.Source)} · @{post.Author.Username} · {post.PublishedAt.ToLocalTime():g}", Url = new(post.Url) };
         foreach (var photo in post.Photos)
         {
             try
@@ -181,6 +203,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (!Guid.TryParse(JobId, out var id)) throw new InvalidOperationException("Укажите корректный ID задания.");
         var request = ++logRequest;
         var reason = SelectedLogReason?.Code;
+        var job = await api.JobAsync(id);
         var result = await api.JobLogsAsync(id, number, reason);
         if (request != logRequest) return;
         logPages = Math.Max(1, (result.Total + result.PageSize - 1) / result.PageSize);
@@ -193,7 +216,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             JobLogs.Add(new JobLogCard(
                 $"@{entry.Username} · опубликован {entry.PublishedAt.ToLocalTime():g} · {entry.WordCount} слов · ID {entry.SourceId}\nЗаписано в лог: {entry.CreatedAt.ToLocalTime():g}",
                 $"{(entry.IsError ? "Ошибка" : "Пропуск")}: {label}", entry.Detail, entry.TextPreview,
-                new Uri($"https://x.com/i/status/{Uri.EscapeDataString(entry.SourceId)}")));
+                LogUrl(job, entry)));
         }
         LogSummary = result.Reasons.Count == 0
             ? "Записей пока нет. Лог создаётся при обработке постов после обновления сервера; причины старых пропусков не сохранены."
@@ -225,11 +248,21 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
     private void ShowJob(ParseJobDto job)
     {
-        JobSummary = $"{job.Status}\nПросмотрено: {job.Scanned} · сохранено: {job.Saved} · уже было: {job.Existing}\n"
+        JobSummary = $"{SourceLabel(job.Source)} · {job.Author} · {job.Status}\nПросмотрено: {job.Scanned} · сохранено: {job.Saved} · уже было: {job.Existing}\n"
             + $"Пропущено: {job.SkippedOther + job.SkippedVideo} · ошибок: {job.Errors}\n"
             + $"Самый ранний найденный: {job.EarliestSeenAt?.ToLocalTime().ToString("g") ?? "—"}\n"
             + $"Причина остановки: {job.StopReason ?? "—"}\n{job.ErrorMessage}";
-        Message = "Статус задания обновлён. Полнота истории X не гарантируется.";
+        Message = job.Source == "telegram" ? "Статус задания Telegram обновлён."
+            : "Статус задания обновлён. Полнота истории X не гарантируется.";
+    }
+    private static string SourceLabel(string source) => source == "telegram" ? "Telegram" : "X";
+    private static Uri LogUrl(ParseJobDto job, ParseJobLogDto entry)
+    {
+        if (job.Source != "telegram") return new Uri($"https://x.com/i/status/{Uri.EscapeDataString(entry.SourceId)}");
+        var ids = entry.SourceId.Split(':');
+        return job.Author.StartsWith("-100", StringComparison.Ordinal)
+            ? new Uri($"https://t.me/c/{ids[0]}/{ids[1]}")
+            : new Uri($"https://t.me/{Uri.EscapeDataString(job.Author)}/{ids[1]}");
     }
     public void Dispose() { polling?.Cancel(); polling?.Dispose(); api.Dispose(); }
 }

@@ -1,7 +1,7 @@
 <Window x:Class="Parser.WinUI.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Twitter Parser — тестовый клиент">
+    Title="X / Telegram Parser — тестовый клиент">
   <Grid Padding="28" RowSpacing="18" DataContext="{x:Bind ViewModel}">
     <Grid.Resources>
       <DataTemplate x:Key="PostTemplate">
@@ -13,7 +13,7 @@
               <ItemsControl.ItemTemplate><DataTemplate><Image Source="{Binding}" MaxHeight="360" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,0,0,8" /></DataTemplate></ItemsControl.ItemTemplate>
             </ItemsControl>
             <TextBlock Text="{Binding PhotoError}" TextWrapping="Wrap" />
-            <HyperlinkButton NavigateUri="{Binding Url}" Content="Открыть оригинал в X" HorizontalAlignment="Left" />
+            <HyperlinkButton NavigateUri="{Binding Url}" Content="Открыть оригинал" HorizontalAlignment="Left" />
           </StackPanel>
         </Border>
       </DataTemplate>
@@ -24,14 +24,14 @@
             <TextBlock Text="{Binding Caption}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
             <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
             <TextBlock Text="{Binding TextPreview}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
-            <HyperlinkButton NavigateUri="{Binding Url}" Content="Открыть пост в X" HorizontalAlignment="Left" />
+            <HyperlinkButton NavigateUri="{Binding Url}" Content="Открыть пост" HorizontalAlignment="Left" />
           </StackPanel>
         </Border>
       </DataTemplate>
     </Grid.Resources>
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <StackPanel Spacing="4">
-      <TextBlock Text="Twitter Parser" Style="{ThemeResource TitleTextBlockStyle}" />
+      <TextBlock Text="X / Telegram Parser" Style="{ThemeResource TitleTextBlockStyle}" />
       <TextBlock Text="Сбор публикаций · текст и журнал заданий · PostgreSQL" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
     </StackPanel>
     <StackPanel Grid.Row="1" Spacing="8">
@@ -39,7 +39,16 @@
       <StackPanel Orientation="Horizontal" Spacing="12">
         <DatePicker Header="С" SelectedDate="{Binding From, Mode=TwoWay}" />
         <DatePicker Header="По" SelectedDate="{Binding To, Mode=TwoWay}" />
-        <ComboBox Header="Сохранённый автор" ItemsSource="{Binding Authors}" DisplayMemberPath="Username" SelectedItem="{Binding SelectedAuthor, Mode=TwoWay}" MinWidth="170" />
+        <ComboBox Header="Сохранённый автор / канал" ItemsSource="{Binding Authors}" SelectedItem="{Binding SelectedAuthor, Mode=TwoWay}" MinWidth="170">
+          <ComboBox.ItemTemplate>
+            <DataTemplate>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="{Binding Source}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="{Binding Username}" />
+              </StackPanel>
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
         <Button Content="Обновить авторов" Command="{Binding RefreshAuthorsCommand}" VerticalAlignment="Bottom" />
       </StackPanel>
     </StackPanel>
@@ -54,7 +63,8 @@
       </TabViewItem>
       <TabViewItem Header="Сбор" IsClosable="False">
         <ScrollViewer><StackPanel Spacing="16" Padding="12,24">
-          <TextBox Header="Username автора в X" PlaceholderText="username или @username" Text="{Binding Author, Mode=TwoWay}" MaxWidth="450" HorizontalAlignment="Left" />
+          <ComboBox Header="Источник" ItemsSource="{Binding Sources}" DisplayMemberPath="Label" SelectedItem="{Binding SelectedSource, Mode=TwoWay}" MinWidth="200" />
+          <TextBox Header="{Binding AuthorHeader}" PlaceholderText="{Binding AuthorPlaceholder}" Text="{Binding Author, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" MinWidth="450" MaxWidth="450" HorizontalAlignment="Left" />
           <StackPanel Orientation="Horizontal" Spacing="12">
             <Button Content="Начать сбор" Command="{Binding StartCommand}" Style="{ThemeResource AccentButtonStyle}" />
             <Button Content="Отменить" Command="{Binding CancelCommand}" />
@@ -62,7 +72,7 @@
           <TextBox Header="ID задания — можно вставить после перезапуска клиента" Text="{Binding JobId, Mode=TwoWay}" MaxWidth="500" HorizontalAlignment="Left" />
           <Button Content="Следить за заданием" Command="{Binding TrackCommand}" />
           <TextBlock Text="{Binding JobSummary}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
-          <TextBlock Text="Сохраняется текст постов от 10 слов, включая ответы, репосты и цитаты. Изображения, видео и GIF не скачиваются. Причины пропусков доступны на вкладке «Лог задания»." TextWrapping="Wrap" />
+          <TextBlock Text="{Binding CollectionHelp}" TextWrapping="Wrap" />
         </StackPanel></ScrollViewer>
       </TabViewItem>
       <TabViewItem Header="Лог задания" IsClosable="False">
